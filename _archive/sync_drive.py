@@ -1,5 +1,7 @@
 import os
 import json
+import time
+from datetime import datetime, timedelta
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
@@ -10,6 +12,29 @@ FOLDERS = {
     "service_manual_1": "1CHz8UWZXfJtXlcjp9-FPAo-t_KkfTztW",
     "service_manual_2": "1_SsZ7SkaZxvXUZ6RUAA_o7WR_GAtgEwT"
 }
+
+# ✅ Add caching
+CACHE_DIR = 'instance/cache'
+CACHE_FILE = os.path.join(CACHE_DIR, 'docs_catalog_cache.json')
+CACHE_DURATION = 3600  # 1 hour
+
+def get_cached_catalog():
+    """Get catalog from cache if fresh"""
+    if os.path.exists(CACHE_FILE):
+        with open(CACHE_FILE, 'r') as f:
+            data = json.load(f)
+            if time.time() - data.get('timestamp', 0) < CACHE_DURATION:
+                return data.get('catalog'), True  # Return cache
+    return None, False
+
+def save_catalog_cache(catalog):
+    """Save catalog to cache"""
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(CACHE_FILE, 'w') as f:
+        json.dump({
+            'timestamp': time.time(),
+            'catalog': catalog
+        }, f)
 
 def get_drive_service():
     if not os.path.exists('credentials.json'):
@@ -43,7 +68,13 @@ def list_files(service, folder_id):
     return files
 
 def main():
-    print("🚀 Memulai verifikasi sinkronisasi Google Drive...")
+    # ✅ Check cache first
+    cached_catalog, from_cache = get_cached_catalog()
+    if from_cache:
+        print("📦 Using cached catalog (< 1 hour old)")
+        return cached_catalog
+    
+    print("🚀 Fetching fresh catalog from Google Drive...")
     service = get_drive_service()
     catalog = {}
     total_files = 0
@@ -58,6 +89,9 @@ def main():
     os.makedirs('static', exist_ok=True)
     with open('static/docs_catalog.json', 'w', encoding='utf-8') as f:
         json.dump(catalog, f, ensure_ascii=False, indent=2)
+
+    # ✅ Save to cache
+    save_catalog_cache(catalog)
 
     print(f"\n✅ Verifikasi selesai! Total: {total_files} file")
     print("📁 File tersimpan di: static/docs_catalog.json")

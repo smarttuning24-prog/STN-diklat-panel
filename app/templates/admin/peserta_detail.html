@@ -102,6 +102,19 @@
                     {% endif %}
                 </span>
             </div>
+            <div class="info-row">
+                <span class="info-label">Akses Dokumen Bengkel</span>
+                <span>
+                    {% if peserta.akses_dokumen_bengkel %}
+                        <span class="akses-ya">✓ Aktif</span>
+                        {% if peserta.tanggal_izin_dokumen %}
+                            <small style="color: #666;">(sejak {{ peserta.tanggal_izin_dokumen.strftime('%d-%m-%Y') }})</small>
+                        {% endif %}
+                    {% else %}
+                        <span class="akses-tidak">✗ Non-Aktif</span>
+                    {% endif %}
+                </span>
+            </div>
             {% if peserta.payment_proof %}
             <div class="info-row">
                 <span class="info-label">Bukti Transfer</span>
@@ -120,15 +133,30 @@
             
             {% if peserta.akses_workshop %}
                 <form method="POST" action="/admin/peserta/{{ peserta.id }}/toggle-akses" style="display: inline;">
+                    {{ csrf_token() }}
                     <button type="submit" class="btn btn-danger">🚫 Cabut Akses Workshop</button>
                 </form>
             {% else %}
                 <form method="POST" action="/admin/peserta/{{ peserta.id }}/toggle-akses" style="display: inline;">
+                    {{ csrf_token() }}
                     <button type="submit" class="btn btn-primary">✅ Berikan Akses Workshop</button>
                 </form>
             {% endif %}
 
+            {% if peserta.akses_dokumen_bengkel %}
+                <form method="POST" action="/admin/peserta/{{ peserta.id }}/toggle-dokumen" style="display: inline;">
+                    {{ csrf_token() }}
+                    <button type="submit" class="btn btn-danger">🔒 Cabut Akses Dokumen Bengkel</button>
+                </form>
+            {% else %}
+                <form method="POST" action="/admin/peserta/{{ peserta.id }}/toggle-dokumen" style="display: inline;">
+                    {{ csrf_token() }}
+                    <button type="submit" class="btn btn-primary">🔓 Berikan Akses Dokumen Bengkel</button>
+                </form>
+            {% endif %}
+
             <form method="POST" action="/admin/peserta/{{ peserta.id }}/hapus" style="display: inline;" onsubmit="return confirm('Yakin hapus peserta ini?');">
+                {{ csrf_token() }}
                 <button type="submit" class="btn btn-danger">🗑️ Hapus Peserta</button>
             </form>
         </div>

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}Workshop Manual Lengkap{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>
+        <i class="fas fa-book"></i>
+        Dokumen Teknis Otomotif - Manual Workshop
+    </h2>
+    <p style="margin-top: 8px; color: var(--text-secondary);">
+        Dokumen teknis lengkap: wiring, engine specs, trouble code, dan prosedur perbaikan.
+    </p>
+</div>
+
+<!-- Container responsif untuk iframe -->
+<div class="google-docs-embed">
+    <iframe
+        src="https://docs.google.com/document/d/e/2PACX-1vQkUHgJughaGh8ZJosdKi0e41dFkO9z4sK4ha6X8pPAxc8v2Je768JBqXe5IkVMc-Bd0Vo2uRJ7nfkK/pub?embedded=true"
+        frameborder="0"
+        allowfullscreen
+        scrolling="yes"
+        title="Workshop Manual"
+    ></iframe>
+</div>
+
+<style>
+    .page-header h2 {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: var(--text-primary);
+        margin-bottom: 12px;
+    }
+    .google-docs-embed {
+        width: 100%;
+        height: 75vh;
+        background: white;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: var(--shadow);
+        border: 1px solid var(--border-color, #ddd);
+    }
+    .google-docs-embed iframe {
+        width: 100%;
+        height: 100%;
+        display: block;
+    }
+
+    /* Responsif untuk tablet & mobile */
+    @media (max-width: 768px) {
+        .google-docs-embed {
+            height: 60vh;
+        }
+        .page-header h2 {
+            font-size: 1.3rem;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block sidebar %}
+<nav>
+    <h3>Kategori</h3>
+    <ul>
+    {% for name, folder_id, count in root_list %}
+        <li>
+            <a href="/folder/{{ folder_id }}">
+                {{ name }}
+                <small>({{ count }})</small>
+            </a>
+        </li>
+    {% endfor %}
+    </ul>
+
+    <h3>Dokumen Khusus</h3>
+    <ul>
+        <li>
+            <a href="/workshop-manual">
+                <i class="fas fa-book" style="margin-right: 6px;"></i>
+                Workshop Manual (Lengkap)
+            </a>
+        </li>
+    </ul>
+</nav>
+{% endblock %}

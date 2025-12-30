@@ -40,6 +40,7 @@
         {% endwith %}
 
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <div class="form-box">
                 <h2>👤 Informasi Pribadi</h2>
                 <div class="form-group">

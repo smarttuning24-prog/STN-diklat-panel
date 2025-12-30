@@ -1,24 +1,12 @@
-# Environment
-venv/
-.env
-.env.local
-.env.production
-credentials.json
-
-# Database
-database/users.db
-database/*.db
-database/*.sqlite
-database/*.sqlite3
-
-# Cache
-__pycache__/
-*.pyc
-*.pyo
-*.py[cod]
-*$py.class
+# Git
+.git
+.gitignore
 
 # Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
 .Python
 build/
 develop-eggs/
@@ -37,9 +25,16 @@ wheels/
 *.egg
 MANIFEST
 
-# Flask
-instance/
-.webassets-cache
+# Environment
+.env
+.env.local
+.env.production
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
 
 # IDE
 .vscode/
@@ -57,6 +52,11 @@ instance/
 ehthumbs.db
 Thumbs.db
 
+# Database (local)
+database/*.db
+database/*.sqlite
+database/*.sqlite3
+
 # Logs
 *.log
 logs/
@@ -68,7 +68,13 @@ htmlcov/
 
 # Documentation
 docs/_build/
+*.md
 
 # Temporary files
 *.tmp
 *.temp
+
+# Development files
+test_*.py
+*_test.py
+requirements-dev.txt

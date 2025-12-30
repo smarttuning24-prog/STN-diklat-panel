@@ -96,12 +96,14 @@
                         <div class="form-inline">
                             {% if p.status_pembayaran != 'Lunas' %}
                             <form method="POST" action="/admin/peserta/{{ p.id }}/verifikasi" style="display: inline;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                 <input type="hidden" name="status" value="Lunas">
                                 <button type="submit" class="btn btn-verify" title="Setujui pembayaran">✓ Lunas</button>
                             </form>
                             {% endif %}
                             {% if p.status_pembayaran != 'Ditolak' %}
                             <form method="POST" action="/admin/peserta/{{ p.id }}/verifikasi" style="display: inline;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                 <input type="hidden" name="status" value="Ditolak">
                                 <button type="submit" class="btn btn-reject" title="Tolak pembayaran">✗ Tolak</button>
                             </form>

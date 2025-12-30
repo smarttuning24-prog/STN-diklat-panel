@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cari Dokumen - Dokumen Bengkel</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            margin-bottom: 25px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .header h1 {
+            font-size: 2em;
+            color: #333;
+            margin-bottom: 15px;
+        }
+        
+        .search-box {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .search-box input {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 1em;
+        }
+        
+        .search-box input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .search-box button {
+            padding: 12px 30px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        
+        .search-box button:hover {
+            background: #5568d3;
+        }
+        
+        .back-button {
+            display: inline-block;
+            padding: 10px 20px;
+            background: #f0f0f0;
+            color: #333;
+            text-decoration: none;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            transition: all 0.3s;
+        }
+        
+        .back-button:hover {
+            background: #e0e0e0;
+        }
+        
+        .results-info {
+            color: white;
+            margin-bottom: 15px;
+            font-size: 0.95em;
+        }
+        
+        .results-count {
+            font-weight: 600;
+        }
+        
+        .result-list {
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .result-item {
+            display: flex;
+            align-items: center;
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            transition: background 0.2s;
+        }
+        
+        .result-item:last-child {
+            border-bottom: none;
+        }
+        
+        .result-item:hover {
+            background: #f9f9f9;
+        }
+        
+        .result-icon {
+            font-size: 2em;
+            margin-right: 20px;
+            width: 40px;
+            text-align: center;
+        }
+        
+        .result-info {
+            flex: 1;
+        }
+        
+        .result-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+        }
+        
+        .result-path {
+            font-size: 0.85em;
+            color: #999;
+            margin-bottom: 3px;
+        }
+        
+        .result-type {
+            font-size: 0.8em;
+            color: #667eea;
+            display: inline-block;
+            background: #f0f0f0;
+            padding: 2px 8px;
+            border-radius: 3px;
+        }
+        
+        .result-actions {
+            display: flex;
+            gap: 10px;
+            margin-left: 15px;
+        }
+        
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9em;
+            text-decoration: none;
+            transition: all 0.3s;
+        }
+        
+        .btn-download {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-download:hover {
+            background: #5568d3;
+        }
+        
+        .btn-folder {
+            background: #f0f0f0;
+            color: #333;
+        }
+        
+        .btn-folder:hover {
+            background: #e0e0e0;
+        }
+        
+        .empty-state {
+            background: white;
+            padding: 60px 20px;
+            border-radius: 10px;
+            text-align: center;
+            color: #999;
+        }
+        
+        .empty-state-icon {
+            font-size: 4em;
+            margin-bottom: 20px;
+        }
+        
+        .category-badge {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 3px;
+            font-size: 0.75em;
+            margin-left: 8px;
+            font-weight: 500;
+        }
+        
+        @media (max-width: 768px) {
+            .result-item {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            
+            .result-icon {
+                margin-right: 0;
+                margin-bottom: 10px;
+            }
+            
+            .result-actions {
+                margin-left: 40px;
+                margin-top: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/documents" class="back-button">← Kembali ke Dokumen Bengkel</a>
+        
+        <div class="header">
+            <h1>🔍 Cari Dokumen</h1>
+            <form method="get" action="/documents/search" class="search-box">
+                <input type="text" name="q" value="{{ query }}" placeholder="Cari dokumen..." required>
+                <button type="submit">Cari</button>
+            </form>
+        </div>
+        
+        {% if query %}
+        <div class="results-info">
+            <span class="results-count">{{ results|length }} hasil</span> ditemukan untuk "<strong>{{ query }}</strong>"
+        </div>
+        {% endif %}
+        
+        {% if results %}
+        <div class="result-list">
+            {% for result in results %}
+            <div class="result-item">
+                <div class="result-icon">
+                    {% if result.is_directory %}
+                        📁
+                    {% else %}
+                        📄
+                    {% endif %}
+                </div>
+                <div class="result-info">
+                    <div class="result-name">{{ result.name }}</div>
+                    <div class="result-path">
+                        {% if result.root_folder_name %}
+                        <span class="category-badge">{{ result.root_folder_name }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="result-actions">
+                    {% if result.is_directory %}
+                        <a href="/documents/folder/{{ result.id }}" class="btn btn-folder">Buka Folder →</a>
+                    {% else %}
+                        {% if has_access %}
+                            <a href="https://drive.google.com/uc?export=download&id={{ result.id }}" 
+                               target="_blank" class="btn btn-download">📥 Download</a>
+                        {% else %}
+                            <button disabled class="btn btn-download" style="opacity: 0.5; cursor: not-allowed;" title="Anda tidak memiliki akses download">📥 Download (Terkunci)</button>
+                        {% endif %}
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% elif query %}
+        <div class="empty-state">
+            <div class="empty-state-icon">🔍</div>
+            <h2>Tidak Ada Hasil</h2>
+            <p>Tidak ditemukan dokumen yang cocok dengan "<strong>{{ query }}</strong>"</p>
+            <p style="margin-top: 15px; color: #666;">Coba gunakan kata kunci yang berbeda atau jelajahi kategori dokumen.</p>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-state-icon">⌨️</div>
+            <h2>Mulai Pencarian</h2>
+            <p>Masukkan kata kunci di atas untuk mencari dokumen yang Anda butuhkan.</p>
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>

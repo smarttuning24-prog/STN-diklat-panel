@@ -1,10 +1,23 @@
 import os
 import json
-from flask import Blueprint, render_template, request, redirect, url_for, session, flash
+from flask import Blueprint, render_template, request, redirect, url_for, session, flash, jsonify
 from .models import db, Peserta, Batch, Admin
 from werkzeug.utils import secure_filename
 from flask import current_app
 import time
+import mimetypes
+from datetime import datetime
+from .security import rate_limit_login, validate_password_strength
+from flask_wtf.csrf import generate_csrf
+from . import documents_handler
+
+# Add helper function
+def validate_input_length(value, field_name, max_length=255):
+    """Validate input length"""
+    value = str(value).strip()
+    if len(value) > max_length:
+        return False, f"{field_name} terlalu panjang (max {max_length} chars)"
+    return True, value
 
 main = Blueprint('main', __name__)
 
@@ -22,33 +35,46 @@ def daftar():
 
 # === LOGIN USER ===
 @main.route('/login', methods=['GET', 'POST'])
+@rate_limit_login
 def login():
     if request.method == 'POST':
-        wa = request.form.get('whatsapp', '').strip()
-        pwd = request.form.get('password', '').strip()
-        
-        # Validasi input
-        if not wa or not pwd:
-            flash('Nomor WhatsApp dan password harus diisi!')
+        try:
+            wa = request.form.get('whatsapp', '').strip()
+            pwd = request.form.get('password', '').strip()
+            
+            # Validasi input
+            if not wa or not pwd:
+                flash('Nomor WhatsApp dan password harus diisi!')
+                return render_template('user/login.html')
+            
+            # Validasi format WhatsApp
+            if len(wa) < 10 or len(wa) > 15 or not wa.isdigit():
+                flash('Format nomor WhatsApp tidak valid!')
+                return render_template('user/login.html')
+            
+            peserta = Peserta.query.filter_by(whatsapp=wa).first()
+            
+            if not peserta:
+                flash('Nomor WhatsApp tidak ditemukan!')
+                return render_template('user/login.html')
+            
+            if not peserta.check_password(pwd):
+                flash('Password salah!')
+                return render_template('user/login.html')
+            
+            # Login berhasil
+            # Regenerate session after login
+            session.clear()  # ✅ Clear old session
+            session['user_id'] = peserta.id
+            session['nama'] = peserta.nama
+            session['akses_workshop'] = peserta.akses_workshop
+            return redirect('/dashboard')
+        except Exception as e:
+            print(f"❌ Error dalam login: {e}")
+            flash('Terjadi kesalahan saat login. Silakan coba lagi.')
             return render_template('user/login.html')
-        
-        peserta = Peserta.query.filter_by(whatsapp=wa).first()
-        
-        if not peserta:
-            flash('Nomor WhatsApp tidak ditemukan!')
-            return render_template('user/login.html')
-        
-        if not peserta.check_password(pwd):
-            flash('Password salah!')
-            return render_template('user/login.html')
-        
-        # Login berhasil
-        session['user_id'] = peserta.id
-        session['nama'] = peserta.nama
-        session['akses_workshop'] = peserta.akses_workshop
-        return redirect('/dashboard')
     
-    return render_template('user/login.html')
+    return render_template('user/login.html', csrf_token=generate_csrf())
 
 # === DASHBOARD USER ===
 @main.route('/dashboard')
@@ -75,36 +101,68 @@ def allowed_file(filename):
 
 @main.route('/dashboard/upload-payment', methods=['POST'])
 def upload_payment():
-    if 'user_id' not in session:
-        return redirect('/login')
+    try:
+        if 'user_id' not in session:
+            return redirect('/login')
 
-    peserta = Peserta.query.get(session['user_id'])
-    if not peserta:
-        flash('Peserta tidak ditemukan')
-        return redirect('/dashboard')
+        peserta = Peserta.query.get(session['user_id'])
+        if not peserta:
+            flash('Peserta tidak ditemukan')
+            return redirect('/dashboard')
 
-    if 'proof' not in request.files:
-        flash('File bukti transfer tidak ditemukan')
-        return redirect('/dashboard')
+        if 'proof' not in request.files:
+            flash('File bukti transfer tidak ditemukan')
+            return redirect('/dashboard')
 
-    file = request.files['proof']
-    if file.filename == '':
-        flash('Nama file kosong')
-        return redirect('/dashboard')
+        file = request.files['proof']
+        if file.filename == '':
+            flash('Nama file kosong')
+            return redirect('/dashboard')
 
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        timestamp = int(time.time())
-        saved_name = f"peserta_{peserta.id}_{timestamp}_{filename}"
-        save_path = os.path.join(current_app.config['UPLOAD_FOLDER'], saved_name)
-        file.save(save_path)
-        peserta.payment_proof = saved_name
-        peserta.status_pembayaran = 'Menunggu'
-        db.session.commit()
-        flash('Bukti transfer berhasil diunggah. Status: Menunggu verifikasi.')
-        return redirect('/dashboard')
-    else:
-        flash('Format file tidak didukung. Gunakan png/jpg/pdf')
+        # ✅ Validate MIME type
+        if file and allowed_file(file.filename):
+            mime_type = file.content_type
+            allowed_mimes = ['image/png', 'image/jpeg', 'application/pdf']
+            
+            if mime_type not in allowed_mimes:
+                flash(f'File type tidak diizinkan: {mime_type}')
+                return redirect('/dashboard')
+            
+            # ✅ Also check file size (max 5MB)
+            file.seek(0, 2)  # Seek to end
+            file_size = file.tell()
+            file.seek(0)  # Reset to start
+            
+            if file_size > 5 * 1024 * 1024:  # 5MB
+                flash('File terlalu besar (max 5MB)')
+                return redirect('/dashboard')
+            
+            # ✅ Ensure upload folder exists
+            upload_folder = current_app.config['UPLOAD_FOLDER']
+            os.makedirs(upload_folder, exist_ok=True)
+            
+            filename = secure_filename(file.filename)
+            timestamp = int(time.time())
+            saved_name = f"peserta_{peserta.id}_{timestamp}_{filename}"
+            save_path = os.path.join(upload_folder, saved_name)
+            
+            # ✅ Validate path (prevent directory traversal)
+            if not os.path.abspath(save_path).startswith(os.path.abspath(upload_folder)):
+                flash('Path traversal terdeteksi!')
+                return redirect('/dashboard')
+            
+            file.save(save_path)
+            peserta.payment_proof = saved_name
+            peserta.status_pembayaran = 'Menunggu'
+            db.session.commit()
+            flash('Bukti transfer berhasil diunggah. Status: Menunggu verifikasi.')
+            return redirect('/dashboard')
+        else:
+            flash('Format file tidak didukung. Gunakan png/jpg/pdf')
+            return redirect('/dashboard')
+    except Exception as e:
+        print(f"❌ Error dalam upload payment: {e}")
+        flash('Terjadi kesalahan saat upload file. Silakan coba lagi.')
         return redirect('/dashboard')
 
 
@@ -122,35 +180,54 @@ def profile():
         flash('Profil berhasil diperbarui')
         return redirect('/dashboard')
 
-    return render_template('user/profile.html', peserta=peserta)
+    return render_template('user/profile.html', peserta=peserta, csrf_token=generate_csrf())
 
 
 @main.route('/dashboard/change-password', methods=['POST'])
 def change_password():
-    if 'user_id' not in session:
-        return redirect('/login')
+    try:
+        if 'user_id' not in session:
+            return redirect('/login')
 
-    peserta = Peserta.query.get(session['user_id'])
-    current = request.form.get('current_password', '').strip()
-    new = request.form.get('new_password', '').strip()
-    confirm = request.form.get('confirm_password', '').strip()
+        peserta = Peserta.query.get(session['user_id'])
+        if not peserta:
+            flash('Peserta tidak ditemukan')
+            return redirect('/dashboard')
+        
+        current = request.form.get('current_password', '').strip()
+        new = request.form.get('new_password', '').strip()
+        confirm = request.form.get('confirm_password', '').strip()
 
-    if not peserta.check_password(current):
-        flash('Password saat ini salah')
+        if not current or not new or not confirm:
+            flash('Semua field password harus diisi')
+            return redirect('/dashboard')
+
+        if not peserta.check_password(current):
+            flash('Password saat ini salah')
+            return redirect('/dashboard')
+
+        if new != confirm:
+            flash('Password baru dan konfirmasi tidak cocok')
+            return redirect('/dashboard')
+
+        if len(new) < 6:
+            flash('Password minimal 6 karakter')
+            return redirect('/dashboard')
+        
+        # Validasi password strength
+        is_valid, message = validate_password_strength(new)
+        if not is_valid:
+            flash(f'⚠️ {message}')
+            return redirect('/dashboard')
+
+        peserta.set_password(new)
+        db.session.commit()
+        flash('Password berhasil diubah')
         return redirect('/dashboard')
-
-    if new != confirm:
-        flash('Password baru dan konfirmasi tidak cocok')
+    except Exception as e:
+        print(f"❌ Error dalam change password: {e}")
+        flash('Terjadi kesalahan saat mengubah password. Silakan coba lagi.')
         return redirect('/dashboard')
-
-    if len(new) < 6:
-        flash('Password minimal 6 karakter')
-        return redirect('/dashboard')
-
-    peserta.set_password(new)
-    db.session.commit()
-    flash('Password berhasil diubah')
-    return redirect('/dashboard')
 
 # === DOKUMEN WORKSHOP (HANYA JIKA AKSES = TRUE) ===
 @main.route('/workshop')
@@ -177,19 +254,38 @@ def logout():
 # === ADMIN: LOGIN ===
 @main.route('/admin')
 def admin_login():
-    return render_template('admin/login.html')
+    return render_template('admin/login.html', csrf_token=generate_csrf())
 
 @main.route('/admin/login', methods=['POST'])
+@rate_limit_login
 def admin_do_login():
-    username = request.form['username']
-    password = request.form['password']
-    admin = Admin.query.filter_by(username=username).first()
-    
-    if admin and admin.check_password(password):
-        session['admin'] = True
-        return redirect('/admin/dashboard')
-    else:
-        flash('Login admin gagal!')
+    try:
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        
+        # Validasi input tidak kosong
+        if not username or not password:
+            flash('Username dan password harus diisi!')
+            return redirect('/admin')
+        
+        # Validasi panjang username/password untuk mencegah injection
+        if len(username) > 50 or len(password) > 255:
+            flash('Username atau password terlalu panjang!')
+            return redirect('/admin')
+        
+        admin = Admin.query.filter_by(username=username).first()
+        
+        if admin and admin.check_password(password):
+            session.clear()  # Clear session lama
+            session['admin'] = True
+            session['admin_username'] = username
+            return redirect('/admin/dashboard')
+        else:
+            flash('Login admin gagal! Username atau password salah.')
+            return redirect('/admin')
+    except Exception as e:
+        print(f"❌ Error dalam admin login: {e}")
+        flash('Terjadi kesalahan saat login. Silakan coba lagi.')
         return redirect('/admin')
 
 # === ADMIN: DASHBOARD ===
@@ -216,6 +312,21 @@ def kelola_peserta():
     status = request.args.get('status', 'semua')
     search = request.args.get('search', '').strip()
     
+    # ✅ Validate search input
+    if search:
+        if len(search) > 100:
+            search = search[:100]
+            flash('Search terlalu panjang, dipotong 100 karakter')
+        
+        # Only allow alphanumeric, spaces, dash, underscore
+        if not all(c.isalnum() or c in ' -_' for c in search):
+            flash('Search hanya bisa berisi huruf, angka, spasi, dash, underscore')
+            search = ''
+    
+    # Add pagination
+    page = request.args.get('page', 1, type=int)
+    per_page = 50
+    
     query = Peserta.query
     
     # Filter by payment status
@@ -235,10 +346,10 @@ def kelola_peserta():
             (Peserta.whatsapp.ilike(f'%{search}%'))
         )
     
-    peserta_list = query.all()
+    peserta_list = query.paginate(page=page, per_page=per_page)
     total = Peserta.query.count()
     
-    return render_template('admin/kelola_peserta.html', peserta=peserta_list, status_filter=status, search=search, total=total)
+    return render_template('admin/kelola_peserta.html', peserta=peserta_list.items, pagination=peserta_list, current_page=page, status_filter=status, search=search, total=total, csrf_token=generate_csrf())
 
 @main.route('/admin/peserta/<int:id>')
 def peserta_detail(id):
@@ -273,7 +384,7 @@ def edit_peserta(id):
         return redirect(f'/admin/peserta/{id}')
     
     batches = Batch.query.all()
-    return render_template('admin/peserta_edit.html', peserta=peserta, batches=batches)
+    return render_template('admin/peserta_edit.html', peserta=peserta, batches=batches, csrf_token=generate_csrf())
 
 @main.route('/admin/peserta/<int:id>/toggle-akses', methods=['POST'])
 def toggle_akses(id):
@@ -285,6 +396,72 @@ def toggle_akses(id):
     db.session.commit()
     flash(f"Akses workshop {peserta.nama} diubah menjadi {'Aktif' if peserta.akses_workshop else 'Tidak Aktif'}")
     return redirect(f'/admin/peserta/{id}')
+
+
+@main.route('/admin/peserta/<int:id>/toggle-dokumen', methods=['POST'])
+def toggle_akses_dokumen(id):
+    """Toggle akses Dokumen Bengkel untuk peserta, admin always allowed"""
+    try:
+        if not session.get('admin'):
+            flash('Akses hanya untuk admin!')
+            return redirect('/admin')
+
+        peserta = Peserta.query.get_or_404(id)
+        peserta.akses_dokumen_bengkel = not peserta.akses_dokumen_bengkel
+
+        if peserta.akses_dokumen_bengkel:
+            peserta.tanggal_izin_dokumen = datetime.utcnow()
+            status_msg = 'DIBERIKAN'
+        else:
+            peserta.tanggal_izin_dokumen = None
+            status_msg = 'DICABUT'
+
+        db.session.commit()
+        flash(f"Akses Dokumen Bengkel {peserta.nama} {status_msg}")
+        return redirect(f'/admin/peserta/{id}')
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Error toggle akses dokumen: {e}")
+        flash('Terjadi error saat mengubah hak akses dokumen.')
+        return redirect(f'/admin/peserta/{id}')
+
+
+@main.route('/admin/dokumen-permission')
+def dokumen_permission():
+    """Halaman manage akses Dokumen Bengkel untuk semua peserta"""
+    if not session.get('admin'):
+        return redirect('/admin')
+    
+    page = request.args.get('page', 1, type=int)
+    search = request.args.get('search', '').strip()
+    filter_akses = request.args.get('filter', 'semua')  # semua, memiliki, tidak
+    
+    query = Peserta.query
+    
+    # Filter search
+    if search:
+        query = query.filter(
+            (Peserta.nama.ilike(f'%{search}%')) |
+            (Peserta.whatsapp.ilike(f'%{search}%')) |
+            (Peserta.email.ilike(f'%{search}%'))
+        )
+    
+    # Filter akses
+    if filter_akses == 'memiliki':
+        query = query.filter_by(akses_dokumen_bengkel=True)
+    elif filter_akses == 'tidak':
+        query = query.filter_by(akses_dokumen_bengkel=False)
+    
+    # Pagination
+    peserta_list = query.order_by(Peserta.tanggal_daftar.desc()).paginate(page=page, per_page=50)
+    
+    return render_template('admin/dokumen_permission.html',
+                         peserta_list=peserta_list,
+                         search=search,
+                         filter_akses=filter_akses,
+                         total_peserta=Peserta.query.count(),
+                         peserta_dengan_akses=Peserta.query.filter_by(akses_dokumen_bengkel=True).count(),
+                         peserta_tanpa_akses=Peserta.query.filter_by(akses_dokumen_bengkel=False).count())
 
 @main.route('/admin/peserta/<int:id>/hapus', methods=['POST'])
 def hapus_peserta(id):
@@ -310,18 +487,25 @@ def kelola_grup():
 
 @main.route('/admin/grup/<int:id>/toggle-akses', methods=['POST'])
 def toggle_akses_grup(id):
-    if not session.get('admin'):
-        return redirect('/admin')
-    grup = Batch.query.get_or_404(id)
-    grup.akses_workshop_default = not grup.akses_workshop_default
-    db.session.commit()
-    # Apply group access setting to all peserta in this grup
-    peserta_list = Peserta.query.filter_by(batch=grup.nama).all()
-    for p in peserta_list:
-        p.akses_workshop = grup.akses_workshop_default
-    db.session.commit()
-    flash(f"Akses workshop untuk grup '{grup.nama}' diubah menjadi {'Aktif' if grup.akses_workshop_default else 'Non-Aktif'} dan diterapkan ke peserta grup.")
-    return redirect('/admin/dashboard')
+    try:
+        if not session.get('admin'):
+            flash('Akses hanya untuk admin!')
+            return redirect('/admin')
+        grup = Batch.query.get_or_404(id)
+        grup.akses_workshop_default = not grup.akses_workshop_default
+        db.session.commit()
+        # Apply group access setting to all peserta in this grup
+        peserta_list = Peserta.query.filter_by(batch=grup.nama).all()
+        for p in peserta_list:
+            p.akses_workshop = grup.akses_workshop_default
+        db.session.commit()
+        flash(f"Akses workshop untuk grup '{grup.nama}' diubah menjadi {'Aktif' if grup.akses_workshop_default else 'Non-Aktif'} dan diterapkan ke peserta grup.")
+        return redirect('/admin/dashboard')
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Error toggle akses grup: {e}")
+        flash('Terjadi error saat mengubah hak akses grup.')
+        return redirect('/admin/dashboard')
 
 # === ADMIN: VERIFIKASI PEMBAYARAN ===
 @main.route('/admin/pembayaran')
@@ -342,7 +526,7 @@ def verifikasi_pembayaran():
         query = query.filter(Peserta.status_pembayaran.in_(['Menunggu', 'Lunas', 'Ditolak']))
     
     peserta_list = query.all()
-    return render_template('admin/verifikasi_pembayaran.html', peserta=peserta_list, status_filter=status)
+    return render_template('admin/verifikasi_pembayaran.html', peserta=peserta_list, status_filter=status, csrf_token=generate_csrf())
 
 @main.route('/admin/peserta/<int:id>/verifikasi', methods=['POST'])
 def verifikasi_status(id):
@@ -378,7 +562,7 @@ def buat_grup():
         flash('Grup diklat baru berhasil dibuat!')
         return redirect('/admin/grup')
     
-    return render_template('admin/buat_batch.html')
+    return render_template('admin/buat_batch.html', csrf_token=generate_csrf())
 
 # === ADMIN: LOGOUT ===
 @main.route('/admin/logout')
@@ -387,6 +571,7 @@ def admin_logout():
     return redirect('/admin')
 @main.route('/register', methods=['GET', 'POST'])
 def register():
+    # CSRF disabled for testing
     if request.method == 'POST':
         # Ambil data
         nama = request.form['nama']
@@ -399,18 +584,25 @@ def register():
         alamat = request.form['alamat']
         alasan = request.form['alasan']
 
+        # Validate inputs
+        is_valid, nama = validate_input_length(nama, 'Nama', 100)
+        if not is_valid:
+            flash(is_valid)  # Error message
+            return render_template('user/register.html', csrf_token=generate_csrf())
+
         # Validasi
         if password != confirm:
             flash('Password dan konfirmasi tidak cocok!')
-            return render_template('user/register.html')
+            return render_template('user/register.html', csrf_token=generate_csrf())
         
-        if len(password) < 6:
-            flash('Password minimal 6 karakter!')
-            return render_template('user/register.html')
+        is_valid, message = validate_password_strength(password)
+        if not is_valid:
+            flash(f'⚠️ {message}')
+            return render_template('user/register.html', csrf_token=generate_csrf())
 
         if Peserta.query.filter_by(whatsapp=wa).first():
             flash('Nomor WhatsApp sudah terdaftar!')
-            return render_template('user/register.html')
+            return render_template('user/register.html', csrf_token=generate_csrf())
 
         # Buat & simpan peserta
         peserta = Peserta(
@@ -430,5 +622,448 @@ def register():
 
         flash('Pendaftaran berhasil! Silakan login.')
         return redirect('/login')
+
+    return render_template('user/register.html', csrf_token=generate_csrf())
+
+
+# === DOKUMEN BENGKEL ===
+@main.route('/documents')
+def documents():
+    """Halaman dokumen bengkel - hanya untuk peserta dengan izin"""
+    if 'user_id' not in session:
+        return redirect('/login')
     
-    return render_template('user/register.html')
+    from .models import DocumentAccess
+    
+    peserta = Peserta.query.get(session['user_id'])
+    
+    # Check permission - cek both legacy akses_dokumen_bengkel dan DocumentAccess
+    has_access = False
+    access_reason = ""
+    
+    # 1. Check individual access dari DocumentAccess
+    individual_access = DocumentAccess.query.filter_by(
+        peserta_id=peserta.id,
+        tipe_akses='individual'
+    ).first()
+    
+    if individual_access and individual_access.is_aktif():
+        has_access = True
+        access_reason = "Individual"
+    
+    # 2. Check group access dari DocumentAccess
+    if not has_access and peserta.batch:
+        batch = Batch.query.filter_by(nama=peserta.batch).first()
+        if batch:
+            group_access = DocumentAccess.query.filter_by(
+                batch_id=batch.id,
+                tipe_akses='group'
+            ).first()
+            
+            if group_access and group_access.is_aktif():
+                has_access = True
+                access_reason = f"Batch: {peserta.batch}"
+    
+    # 3. Check legacy field (backward compatibility)
+    if not has_access and peserta.akses_dokumen_bengkel:
+        has_access = True
+        access_reason = "Legacy"
+    
+    if not has_access:
+        flash('Anda tidak memiliki izin akses Dokumen Bengkel. Hubungi admin untuk mendapatkan akses.', 'warning')
+        return redirect('/dashboard')
+    
+    # Ambil katalog dokumen
+    catalog = documents_handler.get_documents_catalog()
+    root_list = documents_handler.get_root_list()
+    
+    return render_template('user/documents.html', 
+                         peserta=peserta,
+                         catalog=catalog,
+                         root_list=root_list,
+                         has_access=True,
+                         access_reason=access_reason)
+
+
+@main.route('/documents/folder/<folder_id>')
+def documents_folder(folder_id):
+    """Tampilkan isi folder dokumen - hanya untuk peserta dengan izin"""
+    if 'user_id' not in session:
+        return redirect('/login')
+    
+    from .models import DocumentAccess
+    
+    peserta = Peserta.query.get(session['user_id'])
+    
+    # Check permission - same as /documents route
+    has_access = False
+    
+    # 1. Check individual access dari DocumentAccess
+    individual_access = DocumentAccess.query.filter_by(
+        peserta_id=peserta.id,
+        tipe_akses='individual'
+    ).first()
+    
+    if individual_access and individual_access.is_aktif():
+        has_access = True
+    
+    # 2. Check group access dari DocumentAccess
+    if not has_access and peserta.batch:
+        batch = Batch.query.filter_by(nama=peserta.batch).first()
+        if batch:
+            group_access = DocumentAccess.query.filter_by(
+                batch_id=batch.id,
+                tipe_akses='group'
+            ).first()
+            
+            if group_access and group_access.is_aktif():
+                has_access = True
+    
+    # 3. Check legacy field
+    if not has_access and peserta.akses_dokumen_bengkel:
+        has_access = True
+    
+    if not has_access:
+        flash('Anda tidak memiliki izin akses Dokumen Bengkel.', 'warning')
+        return redirect('/dashboard')
+    
+    folder_name, items = documents_handler.get_folder_contents(folder_id)
+    
+    if folder_name is None:
+        flash('Folder tidak ditemukan')
+        return redirect('/documents')
+    
+    return render_template('user/documents_folder.html',
+                         peserta=peserta,
+                         folder_id=folder_id,
+                         folder_name=folder_name,
+                         items=items,
+                         has_access=True)
+
+
+@main.route('/documents/search')
+def documents_search():
+    """Cari dokumen - hanya untuk peserta dengan izin"""
+    if 'user_id' not in session:
+        return redirect('/login')
+    
+    from .models import DocumentAccess
+    
+    peserta = Peserta.query.get(session['user_id'])
+    
+    # Check permission - same as /documents route
+    has_access = False
+    
+    # 1. Check individual access dari DocumentAccess
+    individual_access = DocumentAccess.query.filter_by(
+        peserta_id=peserta.id,
+        tipe_akses='individual'
+    ).first()
+    
+    if individual_access and individual_access.is_aktif():
+        has_access = True
+    
+    # 2. Check group access dari DocumentAccess
+    if not has_access and peserta.batch:
+        batch = Batch.query.filter_by(nama=peserta.batch).first()
+        if batch:
+            group_access = DocumentAccess.query.filter_by(
+                batch_id=batch.id,
+                tipe_akses='group'
+            ).first()
+            
+            if group_access and group_access.is_aktif():
+                has_access = True
+    
+    # 3. Check legacy field
+    if not has_access and peserta.akses_dokumen_bengkel:
+        has_access = True
+    
+    if not has_access:
+        flash('Anda tidak memiliki izin akses Dokumen Bengkel.', 'warning')
+        return redirect('/dashboard')
+    query = request.args.get('q', '').strip()
+    results = []
+    
+    if query:
+        results = documents_handler.search_files(query)
+    
+    return render_template('user/documents_search.html',
+                         peserta=peserta,
+                         query=query,
+                         results=results,
+                         has_access=True)
+
+
+@main.route('/documents/file/<file_id>')
+def documents_file_info(file_id):
+    """Info file dokumentasi - hanya untuk peserta dengan izin"""
+    if 'user_id' not in session:
+        return redirect('/login')
+    
+    peserta = Peserta.query.get(session['user_id'])
+    
+    # Check permission
+    if not peserta.akses_dokumen_bengkel:
+        flash('Anda tidak memiliki izin akses Dokumen Bengkel.', 'warning')
+        return redirect('/dashboard')
+    
+    file_info = documents_handler.get_file_info(file_id)
+    
+    if not file_info:
+        flash('File tidak ditemukan')
+        return redirect('/documents')
+    
+    # Redirect ke Google Drive untuk download
+    drive_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    return redirect(drive_url)
+
+
+# ============================================================================
+# DOCUMENT ACCESS MANAGEMENT (Admin)
+# ============================================================================
+
+@main.route('/admin/dokumen')
+def admin_dokumen():
+    """Halaman utama untuk manage akses Dokumen Bengkel"""
+    if 'admin' not in session:
+        return redirect(url_for('main.admin_login'))
+    
+    from .models import DocumentAccess, DocumentSyncLog, Batch
+    
+    # Get document access statistics
+    total_akses = DocumentAccess.query.count()
+    akses_group = DocumentAccess.query.filter_by(tipe_akses='group').count()
+    akses_individual = DocumentAccess.query.filter_by(tipe_akses='individual').count()
+    
+    # Get latest sync log
+    latest_sync = DocumentSyncLog.query.order_by(DocumentSyncLog.tanggal_sync.desc()).first()
+    
+    # Get batches for dropdown
+    batches = Batch.query.filter_by(aktif=True).all()
+    
+    return render_template(
+        'admin/dokumen_management.html',
+        total_akses=total_akses,
+        akses_group=akses_group,
+        akses_individual=akses_individual,
+        latest_sync=latest_sync,
+        batches=batches
+    )
+
+
+@main.route('/admin/dokumen/batch-access')
+def admin_dokumen_batch():
+    """Halaman manage akses dokumen per Batch/Grup"""
+    if 'admin' not in session:
+        return redirect(url_for('main.admin_login'))
+    
+    from .models import DocumentAccess, Batch
+    
+    batches = Batch.query.filter_by(aktif=True).all()
+    batch_accesses = DocumentAccess.query.filter_by(tipe_akses='group').all()
+    
+    # Create dict untuk mapping batch -> access
+    batch_access_dict = {ba.batch_id: ba for ba in batch_accesses}
+    
+    return render_template(
+        'admin/dokumen_batch_access.html',
+        batches=batches,
+        batch_access_dict=batch_access_dict
+    )
+
+
+@main.route('/admin/dokumen/grant-batch', methods=['POST'])
+def admin_grant_batch_access():
+    """Grant akses dokumen untuk seluruh batch/grup"""
+    if 'admin' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    from .models import DocumentAccess, Batch
+    from datetime import datetime, timedelta
+    
+    batch_id = request.json.get('batch_id')
+    grant = request.json.get('grant', True)
+    tanggal_kadaluarsa = request.json.get('tanggal_kadaluarsa')
+    catatan = request.json.get('catatan', '')
+    
+    try:
+        batch = Batch.query.get(batch_id)
+        if not batch:
+            return jsonify({'error': 'Batch tidak ditemukan'}), 404
+        
+        # Cek apakah sudah ada
+        existing = DocumentAccess.query.filter_by(
+            batch_id=batch_id,
+            tipe_akses='group'
+        ).first()
+        
+        if existing:
+            # Update existing
+            existing.akses_diberikan = grant
+            existing.tanggal_kadaluarsa = datetime.fromisoformat(tanggal_kadaluarsa) if tanggal_kadaluarsa else None
+            existing.catatan = catatan
+            existing.tanggal_diubah = datetime.utcnow()
+        else:
+            # Create new
+            access = DocumentAccess(
+                tipe_akses='group',
+                batch_id=batch_id,
+                akses_diberikan=grant,
+                tanggal_kadaluarsa=datetime.fromisoformat(tanggal_kadaluarsa) if tanggal_kadaluarsa else None,
+                catatan=catatan,
+                dibuat_oleh=session.get('admin', 'unknown')
+            )
+            db.session.add(access)
+        
+        db.session.commit()
+        
+        peserta_count = Peserta.query.filter_by(batch=batch.nama).count()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Akses {"diberikan" if grant else "dicabut"} untuk {peserta_count} peserta di batch {batch.nama}',
+            'peserta_affected': peserta_count
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@main.route('/admin/dokumen/individual-access')
+def admin_dokumen_individual():
+    """Halaman manage akses dokumen per Peserta"""
+    if 'admin' not in session:
+        return redirect(url_for('main.admin_login'))
+    
+    from .models import DocumentAccess
+    
+    page = request.args.get('page', 1, type=int)
+    search = request.args.get('search', '', type=str)
+    
+    # Base query
+    query = Peserta.query
+    
+    if search:
+        query = query.filter(
+            (Peserta.nama.ilike(f'%{search}%')) |
+            (Peserta.whatsapp.ilike(f'%{search}%'))
+        )
+    
+    peserta = query.paginate(page=page, per_page=50)
+    
+    # Get document access untuk semua peserta
+    individual_accesses = DocumentAccess.query.filter_by(tipe_akses='individual').all()
+    access_dict = {ba.peserta_id: ba for ba in individual_accesses}
+    
+    return render_template(
+        'admin/dokumen_individual_access.html',
+        peserta=peserta,
+        access_dict=access_dict,
+        search=search
+    )
+
+
+@main.route('/admin/dokumen/grant-individual', methods=['POST'])
+def admin_grant_individual_access():
+    """Grant akses dokumen untuk peserta individual"""
+    if 'admin' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    from .models import DocumentAccess
+    from datetime import datetime
+    
+    peserta_id = request.json.get('peserta_id')
+    grant = request.json.get('grant', True)
+    tanggal_kadaluarsa = request.json.get('tanggal_kadaluarsa')
+    catatan = request.json.get('catatan', '')
+    
+    try:
+        peserta = Peserta.query.get(peserta_id)
+        if not peserta:
+            return jsonify({'error': 'Peserta tidak ditemukan'}), 404
+        
+        # Cek apakah sudah ada
+        existing = DocumentAccess.query.filter_by(
+            peserta_id=peserta_id,
+            tipe_akses='individual'
+        ).first()
+        
+        if existing:
+            # Update existing
+            existing.akses_diberikan = grant
+            existing.tanggal_kadaluarsa = datetime.fromisoformat(tanggal_kadaluarsa) if tanggal_kadaluarsa else None
+            existing.catatan = catatan
+            existing.tanggal_diubah = datetime.utcnow()
+        else:
+            # Create new
+            access = DocumentAccess(
+                tipe_akses='individual',
+                peserta_id=peserta_id,
+                akses_diberikan=grant,
+                tanggal_kadaluarsa=datetime.fromisoformat(tanggal_kadaluarsa) if tanggal_kadaluarsa else None,
+                catatan=catatan,
+                dibuat_oleh=session.get('admin', 'unknown')
+            )
+            db.session.add(access)
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Akses {"diberikan" if grant else "dicabut"} untuk {peserta.nama}',
+            'peserta_name': peserta.nama
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@main.route('/admin/dokumen/sync-status')
+def admin_sync_status():
+    """Get status sinkronisasi Google Drive"""
+    if 'admin' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    from .models import DocumentSyncLog
+    
+    # Get last 10 sync logs
+    logs = DocumentSyncLog.query.order_by(DocumentSyncLog.tanggal_sync.desc()).limit(10).all()
+    
+    return jsonify({
+        'logs': [{
+            'id': log.id,
+            'tanggal': log.tanggal_sync.isoformat(),
+            'status': log.status,
+            'folder_baru': log.folder_baru,
+            'file_baru': log.file_baru,
+            'durasi': log.durasi_detik,
+            'error': log.error_message
+        } for log in logs]
+    })
+
+
+@main.route('/admin/dokumen/manual-sync', methods=['POST'])
+def admin_manual_sync():
+    """Trigger manual sync untuk Google Drive"""
+    if 'admin' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    try:
+        from .drive_sync import sync_google_drive_documents
+        from threading import Thread
+        
+        # Run sync di background thread
+        thread = Thread(target=sync_google_drive_documents)
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Sinkronisasi dimulai... Silakan cek status dalam beberapa menit'
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500

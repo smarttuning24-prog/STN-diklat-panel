@@ -1,0 +1,17 @@
+[2025-12-16 14:40:47] ==================================================
+[2025-12-16 14:40:47] 🚀 Memulai sinkronisasi dua arah Google Drive...
+[2025-12-16 14:40:47] ✅ Service Account berhasil dimuat.
+[2025-12-16 14:40:48] 📥 Memindai 4 folder target di Google Drive...
+[2025-12-16 14:40:48]   → Folder: EBOOKS
+[2025-12-16 14:40:48]     ➤ 30 item ditemukan (file + folder)
+[2025-12-16 14:40:48]   → Folder: Pengetahuan
+[2025-12-16 14:40:48]     ➤ 124 item ditemukan (file + folder)
+[2025-12-16 14:40:48]   → Folder: Service_Manual_1
+[2025-12-16 14:41:03]     ➤ 4700 item ditemukan (file + folder)
+[2025-12-16 14:41:03]   → Folder: Service_Manual_2
+[2025-12-16 14:41:20]     ➤ 7783 item ditemukan (file + folder)
+[2025-12-16 14:41:20] ✅ Total item unik: 12637
+[2025-12-16 14:41:20] 💾 Menyinkronkan ke database...
+[2025-12-16 14:41:21] 📊 Ringkasan: 12637 item disinkron, 0 dihapus dari DB.
+[2025-12-16 14:41:21] ⏱️  Selesai dalam 33.5 detik.
+[2025-12-16 14:41:21] 🎉 Sinkronisasi dua arah berhasil!

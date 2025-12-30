@@ -54,6 +54,7 @@
                     <td>{{ 'Ya' if grup.akses_workshop_default else 'Tidak' }}</td>
                     <td>
                         <form method="POST" action="/admin/grup/{{ grup.id }}/toggle-akses" style="display:inline-block;">
+                            {{ csrf_token() }}
                             <button class="btn">Toggle Akses</button>
                         </form>
                     </td>

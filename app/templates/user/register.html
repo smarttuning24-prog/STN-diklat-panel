@@ -150,6 +150,8 @@
             {% endwith %}
 
             <form method="POST" action="/register">
+                <!-- CSRF token -->
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <div class="form-group">
                     <label for="nama">NAMA :</label>
                     <input type="text" id="nama" name="nama" required placeholder="Contoh: Budi Santoso">

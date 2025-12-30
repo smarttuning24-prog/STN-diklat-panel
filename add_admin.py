@@ -1,13 +1,13 @@
 from app import create_app
-from app.models import db, User
+from app.models import db, Admin
 
 app = create_app()
 with app.app_context():
-    admin = User(whatsapp="081234567890", role="admin")
+    admin = Admin(username="admin")  # ✅ Admin model fields
     admin.set_password("admin123")
-    if not User.query.filter_by(whatsapp="081234567890").first():
+    if not Admin.query.filter_by(username="admin").first():
         db.session.add(admin)
         db.session.commit()
-        print("✅ Admin dibuat: WA=081234567890, Password=admin123")
+        print("✅ Admin dibuat: Username=admin, Password=admin123")
     else:
         print("⚠️ Admin sudah ada.")

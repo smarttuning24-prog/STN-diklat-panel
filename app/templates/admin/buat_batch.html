@@ -39,6 +39,7 @@
 
         <div class="form-box">
             <form method="POST" action="/admin/grup/buat">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <div class="form-group">
                     <label for="nama">Nama Grup Diklat *</label>
                     <input type="text" id="nama" name="nama" placeholder="Contoh: Diklat STN 2025 - Grup 3" required>
